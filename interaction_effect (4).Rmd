@@ -1,0 +1,276 @@
+---
+title: "interaction_effect"
+author: "Benedikt Sojka | s4089448"
+date: "2025-05-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+```
+
+```{r}
+# MNAR interaction complexity analysis using log-linear models
+
+reference_sample_size <- 7500
+high_prob <- 0.015
+
+# Extract selection probability table
+extract_selection_table <- function(scenario_name) {
+  prob_table <- matrix(0, nrow = 3, ncol = 3)
+  
+  create_pure_main_effects_probs <- function(y_effects, z_effects, high_prob) {
+    prob_lookup <- outer(y_effects, z_effects)
+    prob_lookup <- prob_lookup / max(prob_lookup) * high_prob
+    return(prob_lookup)
+  }
+  
+  create_interaction_probs <- function(interaction_matrix, high_prob) {
+    scaled_matrix <- interaction_matrix / max(interaction_matrix) * high_prob
+    return(scaled_matrix)
+  }
+  
+  if (scenario_name == "pure_me_classic") {
+    prob_table <- create_pure_main_effects_probs(c(1, 2, 3), c(1, 2, 4), high_prob)
+  } else if (scenario_name == "pure_me_nonmonotonic") {
+    prob_table <- create_pure_main_effects_probs(c(2, 5, 1), c(3, 1, 6), high_prob)
+  } else if (scenario_name == "pure_me_y_only") {
+    prob_table <- create_pure_main_effects_probs(c(4, 1, 7), c(2, 2, 2), high_prob)
+  } else if (scenario_name == "weak_interaction") {
+    mild_interaction <- outer(c(1, 2, 3), c(1, 2, 4))
+    mild_interaction[1,1] <- mild_interaction[1,1] * 1.2
+    mild_interaction[2,2] <- mild_interaction[2,2] * 1.3
+    mild_interaction[3,3] <- mild_interaction[3,3] * 1.1
+    prob_table <- create_interaction_probs(mild_interaction, high_prob)
+  } else if (scenario_name == "moderate_interaction") {
+    medium_interaction <- outer(c(1, 2, 3), c(1, 2, 4))
+    medium_interaction[1,1] <- medium_interaction[1,1] * 2.0
+    medium_interaction[2,2] <- medium_interaction[2,2] * 2.5
+    medium_interaction[3,3] <- medium_interaction[3,3] * 1.8
+    prob_table <- create_interaction_probs(medium_interaction, high_prob)
+  } else if (scenario_name == "strong_interaction") {
+    base_matrix <- outer(c(1, 2, 3), c(1, 2, 4))
+    base_matrix[1,1] <- base_matrix[1,1] * 3.0
+    base_matrix[2,2] <- base_matrix[2,2] * 3.5
+    base_matrix[3,3] <- base_matrix[3,3] * 2.5
+    base_matrix[1,2] <- base_matrix[1,2] * 0.8
+    base_matrix[1,3] <- base_matrix[1,3] * 0.7
+    base_matrix[2,1] <- base_matrix[2,1] * 0.8
+    base_matrix[2,3] <- base_matrix[2,3] * 0.8
+    base_matrix[3,1] <- base_matrix[3,1] * 0.7
+    base_matrix[3,2] <- base_matrix[3,2] * 0.8
+    prob_table <- create_interaction_probs(base_matrix, high_prob)
+  } else if (scenario_name == "extreme_interaction") {
+    strong_interaction <- matrix(c(
+      1.0, 0.1, 0.1,
+      0.1, 1.0, 0.1,
+      0.1, 0.1, 1.0
+    ), nrow = 3, byrow = TRUE)
+    prob_table <- create_interaction_probs(strong_interaction, high_prob)
+  }
+  
+  return(prob_table)
+}
+
+# Quantify interaction using log-linear models
+quantify_selection_interaction <- function(selection_prob_table) {
+  # Convert to expected counts
+  total_selection_prob <- sum(selection_prob_table)
+  normalized_probs <- selection_prob_table / total_selection_prob
+  expected_selected <- normalized_probs * reference_sample_size
+  
+  # Create data frame for modeling
+  data_df <- data.frame(
+    Y = factor(rep(0:2, each = 3)),
+    Z = factor(rep(0:2, times = 3)),
+    count = as.vector(expected_selected)
+  )
+  
+  # Fit models
+  model_main <- glm(count ~ Y + Z, family = poisson, data = data_df)
+  model_saturated <- glm(count ~ Y * Z, family = poisson, data = data_df)
+  
+  # Likelihood ratio test
+  lr_test <- anova(model_main, model_saturated, test = "Chisq")
+  
+  chi_square_stat <- lr_test$Deviance[2]
+  p_value <- lr_test$`Pr(>Chi)`[2]
+  
+  # Handle perfect main effects case
+  if (is.na(chi_square_stat)) {
+    chi_square_stat <- 0
+    p_value <- 1
+  }
+  
+  # Calculate Cramer's V
+  cramers_v <- sqrt(chi_square_stat / (sum(data_df$count) * 2))
+  
+  return(list(
+    chi_square = chi_square_stat,
+    p_value = p_value,
+    cramers_v = cramers_v
+  ))
+}
+
+# Function to create ratio table for display
+create_ratio_table <- function(prob_table, scenario_name) {
+  # Find minimum probability (reference)
+  min_prob <- min(prob_table)
+  
+  # Calculate ratios
+  ratio_table <- prob_table / min_prob
+  
+  # Format as ratios (e.g., "6:1")
+  ratio_formatted <- matrix(
+    paste0(round(ratio_table, 1), ":1"),
+    nrow = 3, ncol = 3
+  )
+  
+  # Convert to data frame for kable
+  ratio_df <- as.data.frame(ratio_formatted)
+  colnames(ratio_df) <- c("Z=0", "Z=1", "Z=2")
+  rownames(ratio_df) <- c("Y=0", "Y=1", "Y=2")
+  
+  # Create readable scenario names for captions
+  readable_names <- list(
+    "pure_me_classic" = "Pure Main Effects Classic",
+    "pure_me_nonmonotonic" = "Pure Main Effects Non-monotonic", 
+    "pure_me_y_only" = "Pure Main Effects Y Only",
+    "weak_interaction" = "Weak Interaction",
+    "moderate_interaction" = "Moderate Interaction",
+    "strong_interaction" = "Strong Interaction",
+    "extreme_interaction" = "Extreme Interaction"
+  )
+  
+  display_name <- readable_names[[scenario_name]]
+  
+  # Create kable
+  kable(ratio_df, 
+        caption = paste("Selection Probability Ratios:", display_name),
+        align = "c",
+        booktabs = TRUE) %>%
+    kable_styling(latex_options = c("hold_position", "striped")) %>%
+    add_header_above(c(" " = 1, "Variable Z" = 3)) %>%
+    pack_rows("Variable Y", 1, 3)
+}
+
+# Analyze all scenarios
+scenario_names <- c(
+  "pure_me_classic",
+  "pure_me_nonmonotonic", 
+  "pure_me_y_only",
+  "weak_interaction",
+  "moderate_interaction",
+  "strong_interaction",
+  "extreme_interaction"
+)
+
+# Initialize results data frame
+results <- data.frame(
+  Scenario = scenario_names,
+  Chi_Square = numeric(7),
+  # P_Value = numeric(7),
+  Cramers_V = numeric(7)
+)
+
+# Run analysis for each scenario
+for (i in 1:7) {
+  prob_table <- extract_selection_table(scenario_names[i])
+  analysis <- quantify_selection_interaction(prob_table)
+  
+  results$Chi_Square[i] <- round(analysis$chi_square, 4)
+  # results$P_Value[i] <- analysis$p_value
+  results$Cramers_V[i] <- round(analysis$cramers_v, 4)
+}
+
+# Display results
+print(results)
+```
+
+## Selection Probability Tables for Main Effects Scenarios
+
+The following tables show the selection probabilities for each combination of Y and Z variables. The probabilities are displayed as ratios relative to the lowest probability (scaled to 1:1 as reference).
+
+```{r main-effects-tables, results='asis'}
+# Main effects scenarios to display
+main_effects_scenarios <- c("pure_me_classic", "pure_me_nonmonotonic", "pure_me_y_only")
+
+for (scenario in main_effects_scenarios) {
+  # Extract probability table
+  prob_table <- extract_selection_table(scenario)
+  
+  # Create and display ratio table
+  ratio_table <- create_ratio_table(prob_table, scenario)
+  cat("\n")
+  print(ratio_table)
+  cat("\n")
+}
+```
+
+### Interpretation - Main Effects
+
+- **Pure Main Effects Classic**: Shows a monotonic pattern where higher categories of both Y and Z have progressively higher selection probabilities.
+
+- **Pure Main Effects Non-monotonic**: Demonstrates a non-linear relationship where the middle category of Y has the highest selection probability, while Z shows an irregular pattern.
+
+- **Pure Main Effects Y Only**: Illustrates a scenario where selection depends primarily on variable Y, with Z having minimal influence (constant effect across Z categories).
+
+## Selection Probability Tables for Interaction Effects Scenarios
+
+```{r interaction-effects-tables, results='asis'}
+# Interaction effects scenarios to display
+interaction_scenarios <- c("weak_interaction", "moderate_interaction", "strong_interaction", "extreme_interaction")
+
+for (scenario in interaction_scenarios) {
+  # Extract probability table
+  prob_table <- extract_selection_table(scenario)
+  
+  # Create and display ratio table
+  ratio_table <- create_ratio_table(prob_table, scenario)
+  cat("\n")
+  print(ratio_table)
+  cat("\n")
+}
+```
+
+
+## Summary of Interaction Complexity Measures
+
+```{r summary-table, results='asis'}
+# Create readable scenario names
+readable_names <- c(
+  "pure_me_classic" = "Pure Main Effects Classic",
+  "pure_me_nonmonotonic" = "Pure Main Effects Non-monotonic", 
+  "pure_me_y_only" = "Pure Main Effects Y Only",
+  "weak_interaction" = "Weak Interaction",
+  "moderate_interaction" = "Moderate Interaction",
+  "strong_interaction" = "Strong Interaction",
+  "extreme_interaction" = "Extreme Interaction"
+)
+
+# Replace scenario names with readable versions
+results_readable <- results
+results_readable$Scenario <- readable_names[results$Scenario]
+
+# Order results by Chi-square value (descending)
+results_ordered <- results_readable[order(results_readable$Chi_Square, decreasing = TRUE), ]
+
+# Create formatted summary table
+summary_table <- kable(results_ordered, 
+                      caption = "Interaction Complexity Measures (Ordered by Chi-Square)",
+                      col.names = c("Scenario", "Chi-Square Statistic", "Cramer's V"),
+                      align = c("l", "c", "c"),
+                      booktabs = TRUE,
+                      row.names = FALSE) %>%
+  kable_styling(latex_options = c("hold_position", "striped")) %>%
+  add_header_above(c(" " = 1, "Interaction Measures" = 2)) %>%
+  column_spec(1, width = "4cm") %>%
+  column_spec(2:3, width = "2cm")
+
+print(summary_table)
+```
+
+The ratio format makes it easy to see the relative strength of selection bias across different combinations of the target variables, while the summary table quantifies the interaction complexity using statistical measures.
