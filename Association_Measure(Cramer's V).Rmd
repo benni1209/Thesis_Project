@@ -1,0 +1,289 @@
+---
+title: "Association Measure Analysis"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+```
+
+## Helper Functions
+
+```{r}
+cramers_v <- function(x, y) {
+  cont_table <- table(x, y)
+  
+  chi2 <- chisq.test(cont_table)$statistic
+  n <- sum(cont_table)
+  
+  r <- nrow(cont_table)
+  c <- ncol(cont_table)
+  
+  v <- sqrt(chi2 / (n * (min(r, c) - 1)))
+  
+  return(as.numeric(v))
+}
+
+generate_population_no_direct <- function(pop_size = 1000000, 
+                                        scenario = "scenario_1", 
+                                        seed = 123) {
+  set.seed(seed)
+  
+  population <- data.frame(
+    id = 1:pop_size,
+    X = sample(1:6, pop_size, replace = TRUE, 
+               prob = c(0.15, 0.15, 0.20, 0.20, 0.15, 0.15))
+  )
+  
+  y_probs <- matrix(c(
+    0.6, 0.2, 0.2,
+    0.6, 0.2, 0.2,
+    0.4, 0.3, 0.3,
+    0.3, 0.3, 0.4,
+    0.2, 0.3, 0.5,
+    0.1, 0.3, 0.6
+  ), nrow = 6, byrow = TRUE)
+  
+  population$Y <- apply(population, 1, function(row) {
+    sample(0:2, 1, prob = y_probs[row["X"], ])
+  })
+  
+  if (scenario == "scenario_1") {
+    z_probs <- matrix(c(
+      0.1, 0.3, 0.6,
+      0.2, 0.3, 0.5,
+      0.3, 0.3, 0.4,
+      0.4, 0.3, 0.3,
+      0.5, 0.3, 0.2,
+      0.6, 0.3, 0.1
+    ), nrow = 6, byrow = TRUE)
+    
+  } else {
+    z_probs <- matrix(c(
+      0.15, 0.15, 0.70,
+      0.15, 0.25, 0.60,
+      1/3,  1/3,  1/3,
+      1/3,  1/3,  1/3,
+      0.60, 0.25, 0.15,
+      0.70, 0.15, 0.15
+    ), nrow = 6, byrow = TRUE)
+  }
+  
+  population$Z <- apply(population, 1, function(row) {
+    sample(0:2, 1, prob = z_probs[row["X"], ])
+  })
+  
+  return(population)
+}
+
+generate_population_association <- function(pop_size = 1000000, 
+                                          scenario = "scenario_1", 
+                                          seed = 123) {
+  set.seed(seed)
+  
+  population <- data.frame(
+    id = 1:pop_size,
+    X = sample(1:6, pop_size, replace = TRUE, 
+               prob = c(0.15, 0.15, 0.20, 0.20, 0.15, 0.15))
+  )
+  
+  y_probs <- matrix(c(
+    0.6, 0.2, 0.2,
+    0.6, 0.2, 0.2,
+    0.4, 0.3, 0.3,
+    0.3, 0.3, 0.4,
+    0.2, 0.3, 0.5,
+    0.1, 0.3, 0.6
+  ), nrow = 6, byrow = TRUE)
+  
+  population$Y <- apply(population, 1, function(row) {
+    sample(0:2, 1, prob = y_probs[row["X"], ])
+  })
+  
+  if (scenario == "scenario_1") {
+    z_probs <- matrix(c(
+      0.1, 0.3, 0.6,
+      0.2, 0.3, 0.5,
+      0.3, 0.3, 0.4,
+      0.4, 0.3, 0.3,
+      0.5, 0.3, 0.2,
+      0.6, 0.3, 0.1
+    ), nrow = 6, byrow = TRUE)
+    
+    population$Z <- apply(population, 1, function(row) {
+      sample(0:2, 1, prob = z_probs[row["X"], ])
+    })
+    
+  } else if (scenario == "scenario_2") {
+    z_base_probs <- matrix(c(
+      0.15, 0.15, 0.70,
+      0.15, 0.25, 0.60,
+      1/3,  1/3,  1/3,
+      1/3,  1/3,  1/3,
+      0.60, 0.25, 0.15,
+      0.70, 0.15, 0.15
+    ), nrow = 6, byrow = TRUE)
+    
+    population$Z <- sapply(1:pop_size, function(i) {
+      z_probs <- z_base_probs[population$X[i], ]
+      
+      if (population$Y[i] == 0) {
+        z_probs <- z_probs + c(0.20, -0.10, -0.10)
+      } else if (population$Y[i] == 1) {
+        z_probs <- z_probs + c(-0.10, 0.20, -0.10)
+      } else {
+        z_probs <- z_probs + c(-0.10, -0.10, 0.20)
+      }
+      
+      z_probs <- pmax(z_probs, 0)
+      z_probs <- z_probs / sum(z_probs)
+      sample(0:2, 1, prob = z_probs)
+    })
+    
+  } else if (scenario == "scenario_3") {
+    z_base_probs <- matrix(c(
+      0.15, 0.15, 0.70,
+      0.15, 0.25, 0.60,
+      1/3,  1/3,  1/3,
+      1/3,  1/3,  1/3,
+      0.60, 0.25, 0.15,
+      0.70, 0.15, 0.15
+    ), nrow = 6, byrow = TRUE)
+    
+    population$Z <- sapply(1:pop_size, function(i) {
+      z_probs <- z_base_probs[population$X[i], ]
+      
+      if (population$Y[i] == 0) {
+        z_probs <- z_probs + c(0.30, -0.15, -0.15)
+      } else if (population$Y[i] == 1) {
+        z_probs <- z_probs + c(-0.15, 0.30, -0.15)
+      } else {
+        z_probs <- z_probs + c(-0.15, -0.15, 0.30)
+      }
+      
+      z_probs <- pmax(z_probs, 0)
+      z_probs <- z_probs / sum(z_probs)
+      sample(0:2, 1, prob = z_probs)
+    })
+    
+  } 
+  return(population)
+}
+
+create_joint_distribution <- function(var1, var2, var1_name, var2_name) {
+  joint_table <- table(var1, var2)
+  joint_prop <- prop.table(joint_table)
+  
+  joint_df <- as.data.frame.matrix(round(joint_prop, 2))
+  
+  return(joint_df)
+}
+
+create_joint_distribution_long <- function(var1, var2, var1_name, var2_name) {
+  joint_table <- table(var1, var2)
+  joint_prop <- prop.table(joint_table)
+  
+  joint_df <- as.data.frame(joint_prop)
+  colnames(joint_df) <- c(var1_name, var2_name, "Proportion")
+  
+  return(joint_df)
+}
+
+create_marginal_distribution <- function(var, var_name) {
+  marg_table <- table(var)
+  marg_prop <- prop.table(marg_table)
+  
+  marg_df <- data.frame(
+    Category = names(marg_prop),
+    Proportion = round(as.numeric(marg_prop), 2)
+  )
+  colnames(marg_df)[1] <- var_name
+  
+  return(marg_df)
+}
+```
+
+## Analysis Function
+
+```{r}
+analyze_scenario <- function(scenario_name) {
+  cat("\n====================\n")
+  cat("SCENARIO:", scenario_name, "\n")
+  cat("====================\n\n")
+  
+  pop_direct <- generate_population_association(scenario = scenario_name)
+  
+  pop_no_direct <- generate_population_no_direct(scenario = scenario_name)
+  
+  v_xy <- cramers_v(pop_direct$X, pop_direct$Y)
+  v_xz <- cramers_v(pop_direct$X, pop_direct$Z)
+  v_yz_total <- cramers_v(pop_direct$Y, pop_direct$Z)
+  v_yz_x_driven <- cramers_v(pop_no_direct$Y, pop_no_direct$Z)
+  v_yz_direct <- v_yz_total - v_yz_x_driven
+  
+  cat("1. Association between X and Y (Cramer's V):", round(v_xy, 2), "\n")
+  cat("2. Association between X and Z (Cramer's V):", round(v_xz, 2), "\n")
+  cat("3. Total association between Y and Z (Cramer's V):", round(v_yz_total, 2), "\n")
+  cat("   - Part driven by X:", round(v_yz_x_driven, 2), 
+      "(", round(v_yz_x_driven/v_yz_total * 100, 1), "%)\n")
+  cat("   - Part driven by direct Y-Z relationship:", round(v_yz_direct, 2),
+      "(", round(v_yz_direct/v_yz_total * 100, 1), "%)\n")
+  
+  results_df <- data.frame(
+    Association = c("X-Y", "X-Z", "Y-Z (Total)", "Y-Z (via X)", "Y-Z (Direct)"),
+    CramersV = c(v_xy, v_xz, v_yz_total, v_yz_x_driven, v_yz_direct)
+  )
+  
+  p <- ggplot(results_df, aes(x = Association, y = CramersV, fill = Association)) +
+    geom_bar(stat = "identity") +
+    ylim(0, max(results_df$CramersV) * 1.1) +
+    theme_minimal() +
+    labs(title = paste("Cramer's V Associations -", scenario_name),
+         y = "Cramer's V",
+         x = "") +
+    theme(legend.position = "none") +
+    geom_text(aes(label = round(CramersV, 2)), vjust = -0.5)
+  
+  print(p)
+  
+  return(list(
+    scenario = scenario_name,
+    v_xy = v_xy,
+    v_xz = v_xz,
+    v_yz_total = v_yz_total,
+    v_yz_x_driven = v_yz_x_driven,
+    v_yz_direct = v_yz_direct
+  ))
+}
+```
+
+## Run Analysis for All Scenarios
+
+```{r}
+results <- list()
+results[[1]] <- analyze_scenario("scenario_1")
+results[[2]] <- analyze_scenario("scenario_2")
+results[[3]] <- analyze_scenario("scenario_3")
+```
+
+## Summary Comparison
+
+```{r}
+comparison_df <- do.call(rbind, lapply(results, function(r) {
+  data.frame(
+    Scenario = r$scenario,
+    `X-Y` = round(r$v_xy, 2),
+    `X-Z` = round(r$v_xz, 2),
+    `Y-Z Total` = round(r$v_yz_total, 2),
+    `Y-Z via X` = round(r$v_yz_x_driven, 2),
+    `Y-Z Direct` = round(r$v_yz_direct, 2),
+    `Direct %` = round(r$v_yz_direct/r$v_yz_total * 100, 1)
+  )
+}))
+
+knitr::kable(comparison_df, col.names = c("Scenario", "X-Y", "X-Z", "Y-Z Total", 
+                                          "Y-Z via X", "Y-Z Direct", "Direct %"))
+```

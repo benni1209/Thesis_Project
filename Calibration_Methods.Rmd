@@ -1,0 +1,175 @@
+---
+title: "Calibration"
+author: "Benedikt Sojka | s4089448"
+date: "2025-06-18"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Function to adjust weights (1D)
+
+```{r}
+
+adjust_weights <- function(data, weights, var_name, target) {
+  wt_dist <- tapply(weights, data[[var_name]], sum) 
+  wt_dist <- wt_dist / sum(weights) 
+  new_weights <- weights 
+  
+  for (cat in names(target)) {
+    cat_val <- as.numeric(cat)
+    idx <- which(data[[var_name]] == cat_val) 
+    
+    if (length(idx) > 0) {
+      current_prop <- wt_dist[cat] 
+      if (!is.na(current_prop) && current_prop > 0) { 
+        adjustment <- target[cat] / current_prop 
+        new_weights[idx] <- weights[idx] * adjustment
+      }
+    }
+  }
+  return(new_weights) 
+}
+
+```
+
+
+# Function to adjust weights (2D)
+
+```{r}
+
+adjust_weights_2d <- function(data, weights, var1_name, var2_name, target) {
+  freq_df <- data.frame(
+    var1 = data[[var1_name]],
+    var2 = data[[var2_name]],
+    weight = weights
+  ) 
+  cross_table <- xtabs(weight ~ var1 + var2, data = freq_df) 
+  wt_dist <- prop.table(cross_table) 
+  new_weights <- weights 
+  
+  for (i in rownames(target)) { 
+    for (j in colnames(target)) {
+      var1_val <- as.numeric(i) 
+      var2_val <- as.numeric(j) 
+      idx <- which(data[[var1_name]] == var1_val & data[[var2_name]] == var2_val) 
+      
+      if (length(idx) > 0) { 
+        current_cell <- if(i %in% rownames(wt_dist) && j %in% colnames(wt_dist)) {
+          wt_dist[i, j] 
+        } else {
+          0
+        }
+        target_cell <- target[i, j] 
+        
+        if (!is.na(current_cell) && current_cell > 0) { 
+          adjustment <- target_cell / current_cell 
+          new_weights[idx] <- weights[idx] * adjustment
+        }
+      }
+    }
+  }
+  return(new_weights)
+}
+
+```
+
+
+# Calibration function
+
+```{r}
+
+calibrate_sample_C <- function(data_list, verbose = FALSE) {
+  population <- data_list$population
+  sample_A <- data_list$sample_A
+  sample_B <- data_list$sample_B
+  sample_C <- data_list$sample_C
+  
+  # Initialize weights
+  sample_C$weight_full <- 1
+  sample_C$weight_X <- 1
+  
+  # Define targets
+  x_target <- prop.table(table(population$X))
+  y_target <- prop.table(table(sample_A$Y))
+  z_target <- prop.table(table(sample_B$Z))
+  xy_target <- prop.table(table(sample_A$X, sample_A$Y))
+  xz_target <- prop.table(table(sample_B$X, sample_B$Z))
+  
+  # Full calibration (X, XY, XZ) - IPF
+  for (iter in 1:50) {
+    old_weights <- sample_C$weight_full
+    sample_C$weight_full <- adjust_weights_2d(sample_C, sample_C$weight_full, "X", "Y", xy_target)
+    sample_C$weight_full <- adjust_weights_2d(sample_C, sample_C$weight_full, "X", "Z", xz_target)
+    sample_C$weight_full <- adjust_weights(sample_C, sample_C$weight_full, "X", x_target)
+    
+    if (max(abs(sample_C$weight_full - old_weights)) < 1e-6) break
+  }
+  
+  # X-only calibration
+  sample_C$weight_X <- adjust_weights(sample_C, sample_C$weight_X, "X", x_target)
+  
+  # Normalize weights
+  sample_C$weight_full <- sample_C$weight_full * (nrow(sample_C) / sum(sample_C$weight_full))
+  sample_C$weight_X <- sample_C$weight_X * (nrow(sample_C) / sum(sample_C$weight_X))
+  
+  data_list$sample_C <- sample_C
+  return(data_list)
+}
+
+```
+
+
+# Example execution
+
+```{r}
+# Assuming that data is generated and samples A, B, C are stored in data_list
+
+results <- list()
+data_list <- calibrate_sample_C(data_list, verbose = FALSE)
+sample_C <- data_list$sample_C
+
+# Sample C with full calibration (X, XY, XZ)
+full_cal_table <- matrix(0, nrow = 3, ncol = 3) 
+rownames(full_cal_table) <- 0:2
+colnames(full_cal_table) <- 0:2
+  
+  for (y_val in 0:2) { 
+    for (z_val in 0:2) {
+      idx <- sample_C$Y == y_val & sample_C$Z == z_val 
+      if (sum(idx) > 0) {
+        full_cal_table[as.character(y_val), as.character(z_val)] <- sum(sample_C$weight_full[idx]) 
+      }
+    }
+  }
+  full_cal_dist <- prop.table(full_cal_table) 
+  results$calibrated_full <- list(
+    distribution = full_cal_dist,
+    method = "Calibrated (X, XY, XZ)"
+  )
+  
+  
+# Sample C with X-only calibration
+x_cal_table <- matrix(0, nrow = 3, ncol = 3)
+rownames(x_cal_table) <- 0:2
+colnames(x_cal_table) <- 0:2
+  
+  for (y_val in 0:2) {
+    for (z_val in 0:2) {
+      idx <- sample_C$Y == y_val & sample_C$Z == z_val
+      if (sum(idx) > 0) {
+        x_cal_table[as.character(y_val), as.character(z_val)] <- sum(sample_C$weight_X[idx])
+      }
+    }
+  }
+  x_cal_dist <- prop.table(x_cal_table) 
+  results$calibrated_x <- list(
+    distribution = x_cal_dist,
+    method = "Calibrated (X only)"
+  )
+  
+```
+

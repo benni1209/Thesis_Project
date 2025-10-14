@@ -1,0 +1,78 @@
+---
+title: "EM"
+author: "Benedikt Sojka | s4089448"
+date: "2025-05-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# EM algorithm for multinomial data
+
+```{r}
+
+em_multinomial <- function(fully_observed, var1_only, var2_only, max_iterations = 200, 
+                          tolerance = 1e-6, verbose = FALSE) {
+  if (!is.matrix(fully_observed) || any(fully_observed < 0)) {
+    stop("fully_observed must be a non-negative matrix")
+  }
+  
+  imputed_table <- fully_observed
+  epsilon <- 1e-10
+  
+  for (iter in 1:max_iterations) {
+    old_table <- imputed_table
+    row_sums <- rowSums(imputed_table) + epsilon
+    col_sums <- colSums(imputed_table) + epsilon
+    new_table <- fully_observed
+    
+    for (i in 1:nrow(imputed_table)) {
+      for (j in 1:ncol(imputed_table)) {
+        row_prop <- if (row_sums[i] > epsilon) imputed_table[i, j] / row_sums[i] else 0
+        col_prop <- if (col_sums[j] > epsilon) imputed_table[i, j] / col_sums[j] else 0
+        
+        var1_imputed <- row_prop * var1_only[i]
+        var2_imputed <- col_prop * var2_only[j]
+        
+        new_table[i, j] <- new_table[i, j] + var1_imputed + var2_imputed
+      }
+    }
+    
+    imputed_table <- new_table
+    rel_diff <- max(abs((imputed_table - old_table) / (old_table + epsilon)))
+    
+    if (rel_diff < tolerance) break
+  }
+  
+  probability_table <- imputed_table / sum(imputed_table)
+  
+  return(list(
+    table = imputed_table,
+    probabilities = probability_table,
+    iterations = iter,
+    converged = rel_diff < tolerance,
+    final_diff = rel_diff
+  ))
+}
+
+```
+
+# Example execution
+
+```{r}
+
+# Y from Sample A and Z from Sample B
+var1_only <- as.numeric(table(sample_A$Y))
+var2_only <- as.numeric(table(sample_B$Z))
+
+# EM with raw Samle C
+raw_table <- table(sample_C$Y, sample_C$Z)
+em_raw_result <- em_multinomial(raw_table, var1_only, var2_only, verbose = FALSE)
+
+# EM with X-calibrated Sample C 
+em_x_result <- em_multinomial(x_cal_table, var1_only, var2_only, verbose = FALSE)  
+
+```
+
