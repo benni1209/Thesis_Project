@@ -1,0 +1,307 @@
+---
+title: "Association Analysis"
+author: "Benedikt Sojka | s4089448"
+date: "2025-07-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+library(reshape2)
+```
+
+# 1. Load Bootstrap Results
+
+```{r}
+cat("Loading bootstrap results...\n")
+bootstrap_results <- readRDS("bootstrap_results_association_mar_mnar_(1000).rds")
+
+cat("\nBootstrap results loaded successfully!\n")
+cat("Number of bootstrap iterations:", bootstrap_results$n_bootstrap, "\n")
+cat("Association scenarios:", paste(bootstrap_results$association_scenarios, collapse = ", "), "\n")
+cat("MAR scenarios:", paste(bootstrap_results$mar_scenarios, collapse = ", "), "\n")
+cat("MNAR scenarios:", paste(bootstrap_results$mnar_scenarios, collapse = ", "), "\n")
+cat("Methods available:", paste(bootstrap_results$methods, collapse = ", "), "\n")
+```
+
+# 2. Measurement Functions
+
+## 2.1 Basic Measures
+
+```{r}
+calculate_total_abs_diff <- function(estimated, true) {
+  sum(abs(estimated - true))
+}
+
+calculate_max_abs_error <- function(estimated, true) {
+  max(abs(estimated - true))
+}
+
+calculate_rmse <- function(estimated, true) {
+  sqrt(mean((estimated - true)^2))
+}
+
+calculate_cramers_v <- function(dist_matrix) {
+  N <- 10000
+  table <- round(dist_matrix * N)
+  chi2_test <- suppressWarnings(chisq.test(table))
+  chi2 <- chi2_test$statistic
+  n <- sum(table)
+  r <- nrow(table)
+  c <- ncol(table)
+  cramers_v <- sqrt(chi2 / (n * (min(r, c) - 1)))
+  return(as.numeric(cramers_v))
+}
+```
+
+## 2.2 Summary Functions
+
+```{r}
+calculate_measures <- function(estimated, true, baseline = NULL) {
+  measures <- list(
+    total_abs_diff = calculate_total_abs_diff(estimated, true),
+    max_abs_error = calculate_max_abs_error(estimated, true),
+    rmse = calculate_rmse(estimated, true),
+    cramers_v = calculate_cramers_v(estimated),
+    cramers_v_true = calculate_cramers_v(true),
+    cramers_v_error = abs(calculate_cramers_v(estimated) - calculate_cramers_v(true))
+  )
+  
+  if (!is.null(baseline)) {
+    baseline_measures <- list(
+      total_abs_diff = calculate_total_abs_diff(baseline, true),
+      max_abs_error = calculate_max_abs_error(baseline, true),
+      rmse = calculate_rmse(baseline, true),
+      cramers_v_error = abs(calculate_cramers_v(baseline) - calculate_cramers_v(true))
+    )
+    
+    measures$rel_improvement_total_abs <- 
+      (baseline_measures$total_abs_diff - measures$total_abs_diff) / 
+      baseline_measures$total_abs_diff * 100
+    
+    measures$rel_improvement_max_abs <- 
+      (baseline_measures$max_abs_error - measures$max_abs_error) / 
+      baseline_measures$max_abs_error * 100
+    
+    measures$rel_improvement_rmse <- 
+      (baseline_measures$rmse - measures$rmse) / 
+      baseline_measures$rmse * 100
+    
+    measures$rel_improvement_cramers_v <- 
+      (baseline_measures$cramers_v_error - measures$cramers_v_error) / 
+      baseline_measures$cramers_v_error * 100
+  }
+  
+  return(measures)
+}
+```
+
+# 3. Analysis Functions for Association Scenarios
+
+## 3.1 Extract Measures from Bootstrap Structure
+
+```{r}
+extract_bootstrap_measures_association <- function(bootstrap_results) {
+  n_bootstrap <- bootstrap_results$n_bootstrap
+  methods <- bootstrap_results$methods
+  association_scenarios <- bootstrap_results$association_scenarios
+  all_selection_scenarios <- c(
+    paste0("MAR_", bootstrap_results$mar_scenarios),
+    paste0("MNAR_", bootstrap_results$mnar_scenarios)
+  )
+  
+  all_measures <- list()
+  
+  for (assoc_scenario in association_scenarios) {
+    assoc_measures <- list()
+    
+    for (sel_scenario in all_selection_scenarios) {
+      sel_measures <- list()
+      
+      for (b in 1:n_bootstrap) {
+        iter_data <- bootstrap_results$data[[assoc_scenario]]$data[[b]][[sel_scenario]]
+        true_dist <- iter_data$distributions$true
+        raw_dist <- iter_data$distributions$raw
+        
+        for (method in methods) {
+          estimated_dist <- iter_data$distributions[[method]]
+          measures <- calculate_measures(estimated_dist, true_dist, raw_dist)
+          
+          if (!method %in% names(sel_measures)) {
+            sel_measures[[method]] <- list()
+          }
+          
+          for (measure_name in names(measures)) {
+            if (!measure_name %in% names(sel_measures[[method]])) {
+              sel_measures[[method]][[measure_name]] <- numeric(n_bootstrap)
+            }
+            sel_measures[[method]][[measure_name]][b] <- measures[[measure_name]]
+          }
+        }
+      }
+      
+      assoc_measures[[sel_scenario]] <- sel_measures
+    }
+    
+    all_measures[[assoc_scenario]] <- assoc_measures
+  }
+  
+  return(all_measures)
+}
+
+cat("\nExtracting measures from bootstrap results...\n")
+bootstrap_measures_all <- extract_bootstrap_measures_association(bootstrap_results)
+```
+
+## 3.2 Calculate Summary Statistics
+
+```{r}
+calculate_summary_stats_association <- function(bootstrap_measures_all) {
+  association_scenarios <- names(bootstrap_measures_all)
+  summary_stats_all <- list()
+  
+  for (assoc_scenario in association_scenarios) {
+    assoc_stats <- list()
+    selection_scenarios <- names(bootstrap_measures_all[[assoc_scenario]])
+    
+    for (sel_scenario in selection_scenarios) {
+      sel_stats <- list()
+      methods <- names(bootstrap_measures_all[[assoc_scenario]][[sel_scenario]])
+      
+      for (method in methods) {
+        method_summary <- list()
+        measure_names <- names(bootstrap_measures_all[[assoc_scenario]][[sel_scenario]][[method]])
+        
+        for (measure in measure_names) {
+          values <- bootstrap_measures_all[[assoc_scenario]][[sel_scenario]][[method]][[measure]]
+          
+          method_summary[[measure]] <- list(
+            mean = mean(values, na.rm = TRUE),
+            median = median(values, na.rm = TRUE),
+            sd = sd(values, na.rm = TRUE),
+            ci_lower = quantile(values, 0.025, na.rm = TRUE),
+            ci_upper = quantile(values, 0.975, na.rm = TRUE),
+            min = min(values, na.rm = TRUE),
+            max = max(values, na.rm = TRUE)
+          )
+        }
+        
+        sel_stats[[method]] <- method_summary
+      }
+      
+      assoc_stats[[sel_scenario]] <- sel_stats
+    }
+    
+    summary_stats_all[[assoc_scenario]] <- assoc_stats
+  }
+  
+  return(summary_stats_all)
+}
+
+cat("Calculating summary statistics...\n")
+summary_stats_all <- calculate_summary_stats_association(bootstrap_measures_all)
+```
+
+# 4. MNAR Interaction Effects Analysis
+
+## 4.1 Association Scenarios
+
+```{r}
+association_scenarios <- bootstrap_results$association_scenarios
+mnar_interaction_scenarios <- c("weak_interaction", "moderate_interaction", 
+                                "strong_interaction", "extreme_interaction")
+
+association_labels <- c(
+  "scenario_1" = "Reduced Association",
+  "scenario_2" = "Baseline Scenario", 
+  "scenario_3" = "Increased Association"
+)
+
+mnar_labels <- c(
+  "weak_interaction" = "Weak Interaction",
+  "moderate_interaction" = "Moderate Interaction",
+  "strong_interaction" = "Strong Interaction",
+  "extreme_interaction" = "Extreme Interaction"
+)
+
+plot_data_association <- data.frame()
+
+for (assoc_scenario in association_scenarios) {
+  for (mnar_scenario in mnar_interaction_scenarios) {
+    sel_scenario <- paste0("MNAR_", mnar_scenario)
+    
+    mean_tad <- summary_stats_all[[assoc_scenario]][[sel_scenario]][["calibrated_full"]]$total_abs_diff$mean
+    
+    plot_data_association <- rbind(plot_data_association, data.frame(
+      Association_Scenario = assoc_scenario,
+      MNAR_Scenario = mnar_scenario,
+      Mean_TAD = mean_tad,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+plot_data_association$Association_Scenario <- factor(plot_data_association$Association_Scenario,
+                                                    levels = association_scenarios,
+                                                    labels = association_labels[association_scenarios])
+plot_data_association$MNAR_Scenario <- factor(plot_data_association$MNAR_Scenario,
+                                             levels = mnar_interaction_scenarios,
+                                             labels = mnar_labels[mnar_interaction_scenarios])
+
+p_association <- ggplot(plot_data_association, aes(x = Association_Scenario, y = Mean_TAD, fill = MNAR_Scenario)) +
+  geom_bar(stat = "identity", width = 0.8, position = position_dodge(width = 0.8)) +
+  labs(x = "Association",
+       y = "Total Absolute Difference",
+       fill = "MNAR Scenario") +
+  theme_minimal() +
+  theme(legend.position = "right") +
+  scale_fill_brewer(palette = "Set2")
+
+print(p_association)
+```
+
+# 5. Mean TAD 
+
+## 5.1 Create Mean-Only Table 
+
+```{r}
+selected_methods <- c("raw", "calibrated_full")
+selected_association_scenarios <- c("scenario_1", "scenario_3")
+mnar_interaction_scenarios <- c("weak_interaction", "moderate_interaction", 
+                                "strong_interaction", "extreme_interaction")
+
+mean_only_table <- data.frame()
+
+for (assoc_scenario in selected_association_scenarios) {
+  for (mnar_scenario in mnar_interaction_scenarios) {
+    sel_scenario <- paste0("MNAR_", mnar_scenario)
+    
+    row_data <- data.frame(
+      Association_Scenario = gsub("_", " ", assoc_scenario),
+      MNAR_Scenario = gsub("_", " ", mnar_scenario),
+      stringsAsFactors = FALSE
+    )
+    
+    for (method in selected_methods) {
+      mean_tad <- summary_stats_all[[assoc_scenario]][[sel_scenario]][[method]]$total_abs_diff$mean
+      method_col_name <- paste0(gsub("_", " ", method))
+      row_data[[method_col_name]] <- sprintf("%.4f", mean_tad)
+    }
+    
+    mean_only_table <- rbind(mean_only_table, row_data)
+  }
+}
+
+kable(mean_only_table, 
+      caption = "Mean Total Absolute Difference (TAD) for Selected Methods and Scenarios",
+      align = c('l', 'l', rep('r', length(selected_methods))),
+      format = "simple") %>%
+  print()
+
+
+```

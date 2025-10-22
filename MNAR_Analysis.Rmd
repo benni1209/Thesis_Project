@@ -1,0 +1,840 @@
+---
+title: "Missing Not at Random (MNAR) Analysis - Multiple Scenarios"
+author: "Benedikt Sojka | s4089448"
+date: "2025-07-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyr)
+library(gridExtra)
+```
+
+# 1. Load Bootstrap Results
+
+```{r}
+cat("Loading bootstrap results...\n")
+bootstrap_results <- readRDS("bootstrap_results_MNAR_scenarios(1000).rds")
+
+cat("\nBootstrap results loaded successfully!\n")
+cat("Number of bootstrap iterations per scenario:", bootstrap_results$n_bootstrap, "\n")
+cat("Scenarios analyzed:", paste(bootstrap_results$scenarios, collapse = ", "), "\n")
+cat("Methods available:", paste(bootstrap_results$methods, collapse = ", "), "\n")
+
+cat("Scenario Types:\n")
+for (scenario in bootstrap_results$scenarios) {
+  info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  cat(sprintf("- %s: %s\n", info$description, info$type))
+}
+cat("\n")
+```
+
+# 2. Measurement Functions
+
+## 2.1 Basic Measures
+
+```{r}
+calculate_total_abs_diff <- function(estimated, true) {
+  sum(abs(estimated - true))
+}
+
+calculate_max_abs_error <- function(estimated, true) {
+  max(abs(estimated - true))
+}
+
+calculate_rmse <- function(estimated, true) {
+  sqrt(mean((estimated - true)^2))
+}
+
+calculate_cramers_v <- function(dist_matrix) {
+  N <- 7500
+  table <- round(dist_matrix * N)
+  chi2_test <- suppressWarnings(chisq.test(table))
+  chi2 <- chi2_test$statistic
+  n <- sum(table)
+  r <- nrow(table)
+  c <- ncol(table)
+  cramers_v <- sqrt(chi2 / (n * (min(r, c) - 1)))
+  return(as.numeric(cramers_v))
+}
+
+calculate_swc_bias <- function(estimated, true) {
+  abs_diffs <- abs(estimated - true)
+  worst_cell_idx <- which.max(abs_diffs)
+  signed_diff <- (estimated - true)[worst_cell_idx]
+  return(signed_diff)
+}
+```
+
+## 2.2 Summary Functions
+
+```{r}
+calculate_measures <- function(estimated, true, baseline = NULL) {
+  measures <- list(
+    total_abs_diff = calculate_total_abs_diff(estimated, true),
+    max_abs_error = calculate_max_abs_error(estimated, true),
+    rmse = calculate_rmse(estimated, true),
+    cramers_v = calculate_cramers_v(estimated),
+    cramers_v_true = calculate_cramers_v(true),
+    cramers_v_error = abs(calculate_cramers_v(estimated) - calculate_cramers_v(true)),
+    swc_bias = calculate_swc_bias(estimated, true)
+  )
+  
+  if (!is.null(baseline)) {
+    baseline_measures <- list(
+      total_abs_diff = calculate_total_abs_diff(baseline, true),
+      max_abs_error = calculate_max_abs_error(baseline, true),
+      rmse = calculate_rmse(baseline, true),
+      cramers_v_error = abs(calculate_cramers_v(baseline) - calculate_cramers_v(true))
+    )
+    
+    measures$rel_improvement_total_abs <- 
+      (baseline_measures$total_abs_diff - measures$total_abs_diff) / 
+      baseline_measures$total_abs_diff * 100
+    
+    measures$rel_improvement_max_abs <- 
+      (baseline_measures$max_abs_error - measures$max_abs_error) / 
+      baseline_measures$max_abs_error * 100
+    
+    measures$rel_improvement_rmse <- 
+      (baseline_measures$rmse - measures$rmse) / 
+      baseline_measures$rmse * 100
+    
+    measures$rel_improvement_cramers_v <- 
+      (baseline_measures$cramers_v_error - measures$cramers_v_error) / 
+      baseline_measures$cramers_v_error * 100
+  }
+  
+  return(measures)
+}
+```
+
+# 3. Analysis Functions for Multiple Scenarios
+
+## 3.1 Extract Measures from Bootstrap Data with Scenarios
+
+```{r}
+extract_bootstrap_measures_scenarios <- function(bootstrap_results) {
+  n_bootstrap <- bootstrap_results$n_bootstrap
+  methods <- bootstrap_results$methods
+  scenarios <- bootstrap_results$scenarios
+  
+  all_measures <- list()
+  
+  for (scenario in scenarios) {
+    scenario_measures <- list()
+    
+    for (b in 1:n_bootstrap) {
+      iter_data <- bootstrap_results$data[[scenario]][[b]]
+      true_dist <- iter_data$distributions$true
+      raw_dist <- iter_data$distributions$raw
+      
+      for (method in methods) {
+        estimated_dist <- iter_data$distributions[[method]]
+        measures <- calculate_measures(estimated_dist, true_dist, raw_dist)
+        
+        if (!method %in% names(scenario_measures)) {
+          scenario_measures[[method]] <- list()
+        }
+        
+        for (measure_name in names(measures)) {
+          if (!measure_name %in% names(scenario_measures[[method]])) {
+            scenario_measures[[method]][[measure_name]] <- numeric(n_bootstrap)
+          }
+          scenario_measures[[method]][[measure_name]][b] <- measures[[measure_name]]
+        }
+      }
+    }
+    
+    all_measures[[scenario]] <- scenario_measures
+  }
+  
+  return(all_measures)
+}
+
+cat("Extracting measures from bootstrap results...\n")
+bootstrap_measures_scenarios <- extract_bootstrap_measures_scenarios(bootstrap_results)
+```
+
+## 3.2 Calculate Summary Statistics by Scenario
+
+```{r}
+calculate_summary_stats_by_scenario <- function(bootstrap_measures_scenarios) {
+  scenarios <- names(bootstrap_measures_scenarios)
+  summary_stats_all <- list()
+  
+  for (scenario in scenarios) {
+    bootstrap_measures <- bootstrap_measures_scenarios[[scenario]]
+    methods <- names(bootstrap_measures)
+    measure_names <- names(bootstrap_measures[[1]])
+    
+    summary_stats <- list()
+    
+    for (method in methods) {
+      method_summary <- list()
+      
+      for (measure in measure_names) {
+        values <- bootstrap_measures[[method]][[measure]]
+        
+        method_summary[[measure]] <- list(
+          mean = mean(values, na.rm = TRUE),
+          median = median(values, na.rm = TRUE),
+          sd = sd(values, na.rm = TRUE),
+          ci_lower = quantile(values, 0.025, na.rm = TRUE),
+          ci_upper = quantile(values, 0.975, na.rm = TRUE),
+          min = min(values, na.rm = TRUE),
+          max = max(values, na.rm = TRUE)
+        )
+      }
+      
+      summary_stats[[method]] <- method_summary
+    }
+    
+    summary_stats_all[[scenario]] <- summary_stats
+  }
+  
+  return(summary_stats_all)
+}
+
+cat("Calculating summary statistics by scenario...\n")
+summary_stats_scenarios <- calculate_summary_stats_by_scenario(bootstrap_measures_scenarios)
+```
+
+## 3.3 Create Summary Tables 
+
+```{r}
+create_measure_table <- function(summary_stats, scenario, measure_name, scenario_info) {
+  methods <- names(summary_stats[[scenario]])
+  
+  method_labels <- c(
+    "raw" = "Raw Sample C",
+    "calibrated_x" = "Calibrated (X)",
+    "calibrated_full" = "Calibrated (Full)",
+    "em_raw" = "EM (Raw)",
+    "em_calibrated" = "EM (Calibrated)"
+  )
+  
+  table_df <- data.frame(
+    Method = methods,
+    Mean = sapply(methods, function(m) 
+      summary_stats[[scenario]][[m]][[measure_name]]$mean),
+    CI_Lower = sapply(methods, function(m) 
+      summary_stats[[scenario]][[m]][[measure_name]]$ci_lower),
+    CI_Upper = sapply(methods, function(m) 
+      summary_stats[[scenario]][[m]][[measure_name]]$ci_upper),
+    stringsAsFactors = FALSE
+  )
+  
+  table_df$Method <- sapply(table_df$Method, function(m) 
+    ifelse(m %in% names(method_labels), method_labels[m], m))
+  
+  table_df$`95% CI` <- sprintf("[%.4f, %.4f]", table_df$CI_Lower, table_df$CI_Upper)
+  table_df <- table_df[, c("Method", "Mean", "95% CI")]
+  
+  return(table_df)
+}
+
+cat("\n=== SUMMARY TABLES FOR ALL MNAR SCENARIOS ===\n\n")
+
+for (scenario in bootstrap_results$scenarios) {
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  
+  cat("\n## Scenario:", scenario_info$description, "\n")
+  cat("Type:", scenario_info$type, "\n\n")
+  
+  cat("### Total Absolute Difference\n")
+  total_abs_table <- create_measure_table(summary_stats_scenarios, scenario, "total_abs_diff", scenario_info)
+  print(kable(total_abs_table, digits = 4, 
+              caption = paste("Total Absolute Difference with 95% CI -", scenario_info$description)))
+  
+  cat("\n### Maximum Absolute Error\n")
+  max_abs_table <- create_measure_table(summary_stats_scenarios, scenario, "max_abs_error", scenario_info)
+  print(kable(max_abs_table, digits = 4, 
+              caption = paste("Maximum Absolute Error with 95% CI -", scenario_info$description)))
+  
+  cat("\n### Single Worst Cell (SWC) Bias\n")
+  swc_bias_table <- create_measure_table(summary_stats_scenarios, scenario, "swc_bias", scenario_info)
+  print(kable(swc_bias_table, digits = 4, 
+              caption = paste("SWC Bias (signed) with 95% CI -", scenario_info$description)))
+  
+  cat("\n")
+}
+```
+
+# 4. Presentation Functions for Scenarios
+
+## 4.1 Create Summary Tables by Scenario
+
+```{r}
+create_scenario_comparison_table <- function(summary_stats_scenarios, 
+                                           method_to_show = "calibrated_full",
+                                           measure_to_show = "total_abs_diff") {
+  scenarios <- names(summary_stats_scenarios)
+  
+  comparison_df <- data.frame()
+  
+  for (scenario in scenarios) {
+    if (method_to_show %in% names(summary_stats_scenarios[[scenario]])) {
+      stats <- summary_stats_scenarios[[scenario]][[method_to_show]][[measure_to_show]]
+      
+      scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+      
+      row_data <- data.frame(
+        Scenario = scenario,
+        Description = scenario_info$description,
+        Type = scenario_info$type,
+        Mean = stats$mean,
+        SD = stats$sd,
+        CI_Lower = stats$ci_lower,
+        CI_Upper = stats$ci_upper,
+        stringsAsFactors = FALSE
+      )
+      
+      comparison_df <- rbind(comparison_df, row_data)
+    }
+  }
+  
+  return(comparison_df)
+}
+
+format_scenario_names_mnar <- function(df) {
+  scenario_labels <- c(
+    "pure_me_classic" = "Pure ME: Classic",
+    "pure_me_nonmonotonic" = "Pure ME: Non-monotonic",
+    "pure_me_y_only" = "Pure ME: Y only",
+    "weak_interaction" = "Weak Interaction",
+    "moderate_interaction" = "Moderate Interaction",
+    "strong_interaction" = "Strong Interaction",
+    "extreme_interaction" = "Extreme Interaction"
+  )
+  
+  if ("Scenario" %in% names(df)) {
+    df$Scenario <- factor(df$Scenario, 
+                         levels = names(scenario_labels),
+                         labels = scenario_labels)
+  }
+  return(df)
+}
+
+create_method_comparison_table <- function(summary_stats_scenarios, 
+                                         scenario_to_show = "pure_me_classic",
+                                         measures_to_include = NULL) {
+  if (is.null(measures_to_include)) {
+    measures_to_include <- c("total_abs_diff", "max_abs_error", "swc_bias", "rmse", 
+                            "cramers_v_error", "rel_improvement_total_abs")
+  }
+  
+  methods <- names(summary_stats_scenarios[[scenario_to_show]])
+  
+  summary_df <- data.frame()
+  
+  for (method in methods) {
+    for (measure in measures_to_include) {
+      if (measure %in% names(summary_stats_scenarios[[scenario_to_show]][[method]])) {
+        stats <- summary_stats_scenarios[[scenario_to_show]][[method]][[measure]]
+        
+        row_data <- data.frame(
+          Method = method,
+          Measure = measure,
+          Mean = stats$mean,
+          SD = stats$sd,
+          CI_Lower = stats$ci_lower,
+          CI_Upper = stats$ci_upper,
+          stringsAsFactors = FALSE
+        )
+        
+        summary_df <- rbind(summary_df, row_data)
+      }
+    }
+  }
+  
+  return(summary_df)
+}
+```
+
+## 4.2 Visualization Functions for Scenarios
+
+```{r}
+plot_method_comparison_scenario <- function(summary_stats_scenarios, 
+                                          scenario,
+                                          measure_name, 
+                                          method_labels = NULL) {
+  methods <- names(summary_stats_scenarios[[scenario]])
+  
+  if (is.null(method_labels)) {
+    method_labels <- c(
+      "raw" = "Raw Sample C",
+      "calibrated_x" = "Calibrated (X)",
+      "calibrated_full" = "Calibrated (Full)",
+      "em_raw" = "EM (Raw)",
+      "em_calibrated" = "EM (Calibrated)"
+    )
+  }
+  
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  
+  plot_data <- data.frame(
+    Method = factor(methods, levels = methods),
+    Mean = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][[measure_name]]$mean),
+    CI_Lower = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][[measure_name]]$ci_lower),
+    CI_Upper = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][[measure_name]]$ci_upper)
+  )
+  
+  plot_data$Method <- factor(plot_data$Method, 
+                            levels = methods,
+                            labels = method_labels[methods])
+  
+  p <- ggplot(plot_data, aes(x = Method, y = Mean)) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+    labs(title = paste(scenario_info$description),
+         y = 'Bias') +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  if (measure_name == "swc_bias") {
+    p <- p + geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.5)
+  }
+  
+  return(p)
+}
+
+plot_scenario_comparison <- function(summary_stats_scenarios, 
+                                   method,
+                                   measure_name) {
+  scenarios <- names(summary_stats_scenarios)
+  
+  plot_data <- data.frame()
+  for (scenario in scenarios) {
+    scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+    
+    row_data <- data.frame(
+      Scenario = scenario,
+      Description = scenario_info$description,
+      Type = scenario_info$type,
+      Mean = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$mean,
+      CI_Lower = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$ci_lower,
+      CI_Upper = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$ci_upper
+    )
+    plot_data <- rbind(plot_data, row_data)
+  }
+  
+  plot_data$Description <- factor(plot_data$Description, 
+                                 levels = unique(plot_data$Description))
+  
+  p <- ggplot(plot_data, aes(x = Description, y = Mean, color = Type)) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+    labs(title = paste(measure_name, "for", method),
+         subtitle = "Comparison Across MNAR Selection Scenarios",
+         y = measure_name,
+         x = "Scenario") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_color_manual(values = c("MNAR - Pure Main Effects" = "blue", 
+                                 "MNAR - Interaction" = "red"))
+  
+  if (measure_name == "swc_bias") {
+    p <- p + geom_hline(yintercept = 0, linetype = "dashed", color = "black", alpha = 0.5)
+  }
+  
+  return(p)
+}
+```
+
+# 5. Visualizations
+
+## 5.1 Method Comparison Within Scenarios - Separated by Type
+
+```{r, fig.width=11, fig.height=5}
+main_effects_scenarios <- c("pure_me_classic", "pure_me_nonmonotonic", "pure_me_y_only")
+interaction_scenarios <- c("weak_interaction", "moderate_interaction", 
+                          "strong_interaction", "extreme_interaction")
+
+method_labels <- c(
+  "raw" = "Raw Sample C",
+  "calibrated_x" = "Calibrated (X)",
+  "calibrated_full" = "Calibrated (Full)",
+  "em_raw" = "EM (Raw)",
+  "em_calibrated" = "EM (Calibrated X)"
+)
+
+method_order <- c("raw", "calibrated_x", "calibrated_full", "em_raw", "em_calibrated")
+
+scenario_labels_main <- c(
+  "pure_me_classic" = "Classic Increase",
+  "pure_me_nonmonotonic" = "Non-monotonic",
+  "pure_me_y_only" = "Y Only"
+)
+
+main_effects_plots <- list()
+for (i in seq_along(main_effects_scenarios)) {
+  scenario <- main_effects_scenarios[i]
+  
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  scenario_label <- scenario_labels_main[scenario]
+  
+  methods <- names(summary_stats_scenarios[[scenario]])
+  
+  plot_data <- data.frame(
+    Method = factor(methods, levels = methods),
+    Mean = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["total_abs_diff"]]$mean),
+    CI_Lower = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["total_abs_diff"]]$ci_lower),
+    CI_Upper = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["total_abs_diff"]]$ci_upper)
+  )
+  
+  plot_data$Method <- factor(plot_data$Method, 
+                            levels = method_order,
+                            labels = method_labels[method_order])
+  
+  main_effects_plots[[i]] <- ggplot(plot_data, aes(x = Method, y = Mean)) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+    labs(title = scenario_label,
+         y = "Total Absolute Difference") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+grid.arrange(grobs = main_effects_plots, nrow = 1, ncol = 3)
+```
+
+```{r, fig.width=11, fig.height=5}
+interaction_scenarios <- c("weak_interaction", "moderate_interaction", 
+                          "strong_interaction", "extreme_interaction")
+
+method_labels <- c(
+  "raw" = "Raw Sample C",
+  "calibrated_x" = "Calibrated (X)",
+  "calibrated_full" = "Calibrated (Full)",
+  "em_raw" = "EM (Raw)",
+  "em_calibrated" = "EM (Calibrated X)"
+)
+
+method_order <- c("raw", "calibrated_x", "calibrated_full", "em_raw", "em_calibrated")
+
+interaction_plots <- list()
+for (i in seq_along(interaction_scenarios)) {
+  scenario <- interaction_scenarios[i]
+  
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  scenario_label <- scenario_info$description
+  
+  methods <- names(summary_stats_scenarios[[scenario]])
+  
+  plot_data <- data.frame(
+    Method = factor(methods, levels = methods),
+    Mean = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["total_abs_diff"]]$mean),
+    CI_Lower = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["total_abs_diff"]]$ci_lower),
+    CI_Upper = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["total_abs_diff"]]$ci_upper)
+  )
+  
+  plot_data$Method <- factor(plot_data$Method, 
+                            levels = method_order,
+                            labels = method_labels[method_order])
+  
+  interaction_plots[[i]] <- ggplot(plot_data, aes(x = Method, y = Mean)) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+    expand_limits(y = 0) +
+    labs(title = scenario_label,
+         y = "Total Absolute Difference") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+grid.arrange(grobs = interaction_plots, ncol = 4)
+```
+
+## 5.3 Scenario Comparison for Key Methods
+
+```{r, fig.width=12, fig.height=6}
+p1 <- plot_scenario_comparison(summary_stats_scenarios, 
+                              "calibrated_full", 
+                              "total_abs_diff")
+
+p2 <- plot_scenario_comparison(summary_stats_scenarios, 
+                              "em_calibrated", 
+                              "total_abs_diff")
+```
+
+```{r, fig.width=8, fig.height=6}
+method <- "calibrated_full"
+measure_name <- "total_abs_diff"
+scenarios <- names(summary_stats_scenarios)
+
+plot_data <- data.frame()
+for (scenario in scenarios) {
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  
+  row_data <- data.frame(
+    Scenario = scenario,
+    Description = scenario_info$description,
+    Type = scenario_info$type,
+    Mean = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$mean,
+    CI_Lower = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$ci_lower,
+    CI_Upper = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$ci_upper
+  )
+  plot_data <- rbind(plot_data, row_data)
+}
+
+plot_data$Description <- factor(plot_data$Description, 
+                               levels = unique(plot_data$Description))
+
+p1 <- ggplot(plot_data, aes(x = Description, y = Mean, color = Type)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+  labs(title = 'TAD for Calibrated (IPF) across MNAR scenarios',
+       y = 'Total Absolute Difference (TAD)',
+       x = "Scenario") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_color_manual(values = c("MNAR - Pure Main Effects" = "blue", 
+                               "MNAR - Interaction" = "red"))
+
+print(p1)
+```
+
+```{r, fig.width=8, fig.height=6}
+method <- "calibrated_full"
+scenarios <- names(summary_stats_scenarios)
+
+plot_data_improvement <- data.frame()
+for (scenario in scenarios) {
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  
+  mean_calibrated <- summary_stats_scenarios[[scenario]][[method]][["total_abs_diff"]]$mean
+  mean_raw <- summary_stats_scenarios[[scenario]][["raw"]][["total_abs_diff"]]$mean
+  
+  rel_improvement <- (mean_raw - mean_calibrated) / mean_raw * 100
+  
+  row_data <- data.frame(
+    Scenario = scenario,
+    Description = scenario_info$description,
+    Type = scenario_info$type,
+    Rel_Improvement = rel_improvement
+  )
+  plot_data_improvement <- rbind(plot_data_improvement, row_data)
+}
+
+plot_data_improvement$Description <- factor(plot_data_improvement$Description, 
+                                           levels = unique(plot_data_improvement$Description))
+
+p2 <- ggplot(plot_data_improvement, aes(x = Description, y = Rel_Improvement, fill = Type)) +
+  geom_col(width = 0.5, alpha = 0.8) +
+  labs(title = 'Relative Improvement of Calibrated (IPF) vs Raw Sample C',
+       y = 'Relative Improvement (%)',
+       x = "Scenario") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("MNAR - Pure Main Effects" = "blue", 
+                              "MNAR - Interaction" = "red"))
+
+print(p2)
+```
+
+```{r, fig.width=8, fig.height=5}
+method <- "calibrated_full"
+measure_name <- "total_abs_diff"
+scenarios <- names(summary_stats_scenarios)
+
+custom_scenario_labels <- c(
+  "pure_me_classic" = "Classic Increase",
+  "pure_me_nonmonotonic" = "Non-monotonic",
+  "pure_me_y_only" = "Y Only",
+  "weak_interaction" = "Weak Interaction",
+  "moderate_interaction" = "Moderate Interaction",
+  "strong_interaction" = "Strong Interaction",
+  "extreme_interaction" = "Extreme Interaction"
+)
+
+plot_data <- data.frame()
+for (scenario in scenarios) {
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  
+  custom_label <- ifelse(scenario %in% names(custom_scenario_labels),
+                        custom_scenario_labels[scenario],
+                        scenario_info$description)
+  
+  row_data <- data.frame(
+    Scenario = scenario,
+    Description = custom_label,
+    Type = scenario_info$type,
+    Mean = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$mean,
+    CI_Lower = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$ci_lower,
+    CI_Upper = summary_stats_scenarios[[scenario]][[method]][[measure_name]]$ci_upper
+  )
+  plot_data <- rbind(plot_data, row_data)
+}
+
+plot_data$Description <- factor(plot_data$Description, 
+                               levels = custom_scenario_labels)
+
+p1 <- ggplot(plot_data, aes(x = Description, y = Mean, color = Type)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+  labs(y = 'Total Absolute Difference',
+       x = "Scenario") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  scale_color_manual(values = c("MNAR - Pure Main Effects" = "blue", 
+                               "MNAR - Interaction" = "red"))
+
+plot_data_improvement <- data.frame()
+for (scenario in scenarios) {
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  
+  custom_label <- ifelse(scenario %in% names(custom_scenario_labels),
+                        custom_scenario_labels[scenario],
+                        scenario_info$description)
+  
+  mean_calibrated <- summary_stats_scenarios[[scenario]][[method]][["total_abs_diff"]]$mean
+  mean_raw <- summary_stats_scenarios[[scenario]][["raw"]][["total_abs_diff"]]$mean
+  
+  rel_improvement <- (mean_raw - mean_calibrated) / mean_raw * 100
+  
+  row_data <- data.frame(
+    Scenario = scenario,
+    Description = custom_label,
+    Type = scenario_info$type,
+    Rel_Improvement = rel_improvement
+  )
+  plot_data_improvement <- rbind(plot_data_improvement, row_data)
+}
+
+plot_data_improvement$Description <- factor(plot_data_improvement$Description, 
+                                           levels = custom_scenario_labels)
+
+p2 <- ggplot(plot_data_improvement, aes(x = Description, y = Rel_Improvement, fill = Type)) +
+  geom_col(width = 0.4, alpha = 0.8) +
+  labs(y = 'Relative Improvement (%)',
+       x = "Scenario") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  scale_fill_manual(values = c("MNAR - Pure Main Effects" = "blue", 
+                              "MNAR - Interaction" = "red"))
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+## 6.3 SWC Bias Visualization
+
+```{r, fig.width=8, fig.height=4.5}
+main_effects_scenarios <- c("pure_me_classic", "pure_me_nonmonotonic", "pure_me_y_only")
+
+method_labels <- c(
+  "raw" = "Raw Sample C",
+  "calibrated_x" = "Calibrated (X)",
+  "calibrated_full" = "Calibrated (Full)",
+  "em_raw" = "EM (Raw)",
+  "em_calibrated" = "EM (Calibrated X)"
+)
+
+method_order <- c("raw", "calibrated_x", "calibrated_full", "em_raw", "em_calibrated")
+
+scenario_labels_main <- c(
+  "pure_me_classic" = "Classic Increase",
+  "pure_me_nonmonotonic" = "Non-monotonic",
+  "pure_me_y_only" = "Y Only"
+)
+
+swc_main_effects_plots <- list()
+for (i in seq_along(main_effects_scenarios)) {
+  scenario <- main_effects_scenarios[i]
+  
+  scenario_label <- scenario_labels_main[scenario]
+  
+  methods <- names(summary_stats_scenarios[[scenario]])
+  
+  plot_data <- data.frame(
+    Method = factor(methods, levels = methods),
+    Mean = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["swc_bias"]]$mean),
+    CI_Lower = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["swc_bias"]]$ci_lower),
+    CI_Upper = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["swc_bias"]]$ci_upper)
+  )
+  
+  plot_data$Method <- factor(plot_data$Method, 
+                            levels = method_order,
+                            labels = method_labels[method_order])
+  
+  swc_main_effects_plots[[i]] <- ggplot(plot_data, aes(x = Method, y = Mean)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.5) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+    labs(title = scenario_label,
+         y = "Signed Difference") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+grid.arrange(grobs = swc_main_effects_plots, nrow = 1, ncol = 3)
+```
+
+```{r, fig.width=11, fig.height=5}
+interaction_scenarios <- c("weak_interaction", "moderate_interaction", 
+                          "strong_interaction", "extreme_interaction")
+
+method_labels <- c(
+  "raw" = "Raw Sample C",
+  "calibrated_x" = "Calibrated (X)",
+  "calibrated_full" = "Calibrated (Full)",
+  "em_raw" = "EM (Raw)",
+  "em_calibrated" = "EM (Calibrated X)"
+)
+
+method_order <- c("raw", "calibrated_x", "calibrated_full", "em_raw", "em_calibrated")
+
+swc_interaction_plots <- list()
+for (i in seq_along(interaction_scenarios)) {
+  scenario <- interaction_scenarios[i]
+  
+  scenario_info <- bootstrap_results$data[[scenario]][[1]]$scenario_info
+  scenario_label <- scenario_info$description
+  
+  methods <- names(summary_stats_scenarios[[scenario]])
+  
+  plot_data <- data.frame(
+    Method = factor(methods, levels = methods),
+    Mean = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["swc_bias"]]$mean),
+    CI_Lower = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["swc_bias"]]$ci_lower),
+    CI_Upper = sapply(methods, function(m) 
+      summary_stats_scenarios[[scenario]][[m]][["swc_bias"]]$ci_upper)
+  )
+  
+  plot_data$Method <- factor(plot_data$Method, 
+                            levels = method_order,
+                            labels = method_labels[method_order])
+  
+  swc_interaction_plots[[i]] <- ggplot(plot_data, aes(x = Method, y = Mean)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.5) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
+    labs(title = scenario_label,
+         y = "Signed Difference") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+grid.arrange(grobs = swc_interaction_plots, ncol = 4)
+```
+
