@@ -12,7 +12,7 @@ These files contain the implementation of the four estimation methods:
 
 ### Implementation & Analysis Scripts
 
-Each of the three analyses (MAR, MNAR, Y-Z Association) contain separate implementation and analysis scripts for clarity and reproducibility. The implementation files generate the data, define the scenarios and apply the estimation methods. They run the monte carlo simulation (1,000 iterations) and saves the results as .rds files. Those files can be loaded into the corresponding analysis scripts to evaluate and analyze performance of the estimation methods.
+Each of the three analyses (MAR, MNAR, Y-Z Association) contain separate implementation and analysis scripts for clarity and reproducibility. The implementation files generate the data, define the scenarios and apply the estimation methods. They run the monte carlo simulation and saves the results as .rds files. Those files can be loaded into the corresponding analysis scripts to evaluate and analyze performance of the estimation methods.
 
 ### Implementation Scripts
 These files generate the data and conduct the monte carlo simulation:
