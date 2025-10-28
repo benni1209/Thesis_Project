@@ -1,21 +1,11 @@
 # Statistical Matching using a Non-Probability Sample as Auxiliary Dataset
 
-This repository contains the complete analysis code and implementation scripts that were used in the thesis project.
-
-## Overview
-
-This project examines methods for estimating joint distributions of two categorical variables (Y and Z) when complete observations are unavailable and data is distributed across multiple samples:
-- **Sample A**: Contains variables X and Y
-- **Sample B**: Contains variables X and Z  
-- **Sample C**: Contains all three variables (X, Y, Z) but with potential selection bias
-
-The research evaluates various statistical methods under both Missing At Random (MAR) and Missing Not At Random (MNAR) scenarios, using bootstrap simulations with 1,000 iterations per scenario.
-
+This repository contains all implementation and analysis scripts used in the thesis project.
 
 ## Repository Structure
 
 ### Estimation Methods
-These files contain the implementation of the 4 estiamtion methods (two calibration approaches and two variants of the EM algorithm)
+These files contain the implementation of the 4 estimation methods (two calibration approaches and two variants of the EM algorithm)
 
 - **`Calibration_Methods.Rmd`**: Two calibration procedures (univariate calibration (X) and full calibration using Iterative Proportional Fitting (IPF))
 - **`EM_Algorithm.Rmd`**: Expectation-Maximization algorithm for multinomial data
@@ -48,39 +38,41 @@ The implementation creates synthetic populations with:
 - **Variable X**: Categorical auxiliary variable (6 categories)
 - **Variables Y and Z**: Outcome variables of interest (3 categories each)
 - Controllable association structures between all variable pairs
+Three samples are drawn from the population:
+- **Sample A**: Contains variables X and Y
+- **Sample B**: Contains variables X and Z  
+- **Sample C**: Contains all three variables (X, Y, Z) but with selection bias
 
 ### Missing Data Mechanisms
 
 #### MAR (Missing At Random)
-Selection into Sample C depends on observed variables (X, Y, or Z) but not on the missing values:
-- Linear decreasing patterns (moderate and extreme)
+Selection into Sample C depends on the background variable X:
+- Linear decreasing patterns (moderate, baseline & extreme)
 - U-shaped selection patterns
 - Step function patterns
 - Extreme bias scenarios
 
 #### MNAR (Missing Not At Random)  
-Selection into Sample C depends on both Y and Z simultaneously, including interaction effects:
-- Pure main effects (classic, non-monotonic, Y-only)
-- Weak, moderate, and strong interaction effects
-- Extreme interaction scenarios
+Selection into Sample C depends on the target variables Y and Z:
+- Pure main effects: classic increase, non-monotonic, y-only
+- Interaction Effects: weak, moderate, strong, extreme
 
 ### Statistical Methods
 
-The analysis evaluates several estimation approaches:
+The following estimation approaches are evaluated:
 
 1. **Raw Sample C**: Unadjusted biased sample
 2. **X-Calibration**: Calibrated to population X distribution
-3. **Full Calibration**: Calibrated to X, (X,Y), and (X,Z) using IPF
-4. **EM Algorithm**: Applied to raw and X-calibrated Sample C
+3. **Full Calibration**: Calibrated to X, (X,Y) from Sample A, and (X,Z) from Sample B using IPF
+4. **EM Algorithm (Raw)**: Applied to the (unadjusted) raw Sample C
+5. **EM Algorithm (Calibrated X)**: Applied to X-calibrated Sample C
 
 ### Performance Metrics
 
 Methods are evaluated using:
 - **Total Absolute Difference (TAD)**: Sum of absolute cell-wise errors
-- **Root Mean Squared Error (RMSE)**: Overall distribution accuracy
-- **Maximum Absolute Error**: Worst-case cell error
-- **Cramér's V**: Association strength in estimated distributions
-- **Worst Cell Bias**: Signed error for the most problematic cell
+- **Single Worst Cell (SWC) Absolute**: Worst-case cell error
+- **Single Worst Cell (SWC) Signed**: Signed error for the most problematic cell
 
 ## Requirements
 
@@ -118,23 +110,14 @@ rmarkdown::render("MAR_Implementation.Rmd")
 rmarkdown::render("MNAR_Implementation.Rmd")
 ```
 
-3. **Apply calibration methods:**
-```r
-rmarkdown::render("Calibration_Methods.Rmd")
-```
-
-4. **Run EM algorithm:**
-```r
-rmarkdown::render("EM_Algorithm.Rmd")
-```
-
 ### Running Analysis Scripts
 
-The analysis scripts expect bootstrap results saved as RDS files:
+The implementation scripts generate monte carlo simulation results saved as RDS files:
 - `bootstrap_results_MAR_scenarios(1000).rds`
 - `bootstrap_results_MNAR_scenarios(1000).rds`  
 - `bootstrap_results_association_mar_mnar_(1000).rds`
 
+The saved RDF files can be used to run the analysis scripts:
 Run the analysis:
 ```r
 rmarkdown::render("MAR_Analysis.Rmd")
@@ -146,10 +129,9 @@ rmarkdown::render("YZ-Association_Analysis.Rmd")
 
 Key parameters can be modified in the implementation scripts:
 - `N_pop`: Population size (default: 1,000,000)
-- `n_bootstrap`: Number of bootstrap iterations (default: 1,000)
-- `base_prob`: Base selection probability for Sample C
+- `n_bootstrap`: Number of monte carlo (bootstrap) iterations (default: 1,000)
 - Sample sizes for A, B, and C
-- Selection probability patterns
+- Selection mechanisms
 - Association structures
 
 ## Author
