@@ -10,7 +10,7 @@ These files contain the implementation of the four estimation methods:
 - **`Calibration_Methods.Rmd`**: univariate calibration (X) and full calibration using IPF
 - **`EM_Algorithm.Rmd`**: Expectation-Maximization algorithm for multinomial data
 
-Each of the three analyses (MAR, MNAR, Y-Z Association) contain separate scripts for implementation and analysis for clarity and reproducibility. The implementation files generate the data, define the scenarios and appliy the estimation methods. They run the monte carlo simulation (1,000 iterations) and saves the results as .rds files. Those files can be loaded into the corresponding analysis scripts to evaluate and analyze performance of the estimation methods.
+Each of the three analyses (MAR, MNAR, Y-Z Association) contain separate scripts for implementation and analysis for clarity and reproducibility. The implementation files generate the data, define the scenarios and apply the estimation methods. They run the monte carlo simulation (1,000 iterations) and saves the results as .rds files. Those files can be loaded into the corresponding analysis scripts to evaluate and analyze performance of the estimation methods.
 
 ### Implementation Scripts
 These files generate the data and conduct the monte carlo simulation:
