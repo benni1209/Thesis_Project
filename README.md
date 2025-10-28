@@ -50,9 +50,9 @@ Three samples are drawn from the population:
 #### MAR (Missing At Random)
 Selection into Sample C depends on the background variable X:
 - Linear decreasing patterns (moderate, baseline & extreme)
-- U-shaped selection patterns
-- Step function patterns
-- Extreme bias scenarios
+- U-shaped selection pattern
+- Step function pattern
+- Extreme increase scenario
 
 #### MNAR (Missing Not At Random)  
 Selection into Sample C depends on the target variables Y and Z:
