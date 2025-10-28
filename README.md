@@ -76,8 +76,6 @@ Methods are evaluated using:
 - **Single Worst Cell (SWC) Absolute**
 - **Single Worst Cell (SWC) Signed**
 
-## Requirements
-
 ### Required R Packages
 ```r
 # Data manipulation and visualization
