@@ -96,40 +96,6 @@ library(kableExtra)
 library(sampling)
 ```
 
-## Usage
-
-### Running Implementation Scripts
-
-1. **Generate data with MAR mechanism:**
-```r
-rmarkdown::render("MAR_Implementation.Rmd")
-```
-
-2. **Generate data with MNAR mechanism:**
-```r
-rmarkdown::render("MNAR_Implementation.Rmd")
-```
-
-3. **Generate data for Y-Z association:**
-```r
-rmarkdown::render("YZ-Association_Implementation.Rmd")
-```
-
-### Running Analysis Scripts
-
-The implementation scripts generate monte carlo simulation results saved as RDS files:
-- `bootstrap_results_MAR_scenarios(1000).rds`
-- `bootstrap_results_MNAR_scenarios(1000).rds`  
-- `bootstrap_results_association_mar_mnar_(1000).rds`
-
-The saved RDF files can be used to run the analysis scripts:
-Run the analysis:
-```r
-rmarkdown::render("MAR_Analysis.Rmd")
-rmarkdown::render("MNAR_Analysis.Rmd")
-rmarkdown::render("YZ-Association_Analysis.Rmd")
-```
-
 ### Customization
 
 Key parameters can be modified in the implementation scripts:
