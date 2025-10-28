@@ -10,7 +10,7 @@ These files contain the implementation of the four estimation methods:
 - **`Calibration_Methods.Rmd`**: univariate calibration (X) and full calibration using IPF
 - **`EM_Algorithm.Rmd`**: Expectation-Maximization algorithm for multinomial data
 
-### Implementation and Analysis Scripts
+### Implementation & Analysis Scripts
 
 Each of the three analyses (MAR, MNAR, Y-Z Association) contain separate scripts for implementation and analysis for clarity and reproducibility. The implementation files generate the data, define the scenarios and apply the estimation methods. They run the monte carlo simulation (1,000 iterations) and saves the results as .rds files. Those files can be loaded into the corresponding analysis scripts to evaluate and analyze performance of the estimation methods.
 
@@ -72,14 +72,11 @@ The following estimation approaches are evaluated:
 ### Performance Metrics
 
 Methods are evaluated using:
-- **Total Absolute Difference (TAD)**: Sum of absolute cell-wise errors
-- **Single Worst Cell (SWC) Absolute**: Worst-case cell error
-- **Single Worst Cell (SWC) Signed**: Signed error for the most problematic cell
+- **Total Absolute Difference (TAD)**
+- **Single Worst Cell (SWC) Absolute**
+- **Single Worst Cell (SWC) Signed**
 
 ## Requirements
-
-### R Version
-- R 4.0.0 or higher recommended
 
 ### Required R Packages
 ```r
