@@ -7,13 +7,13 @@ This repository contains all implementation and analysis scripts used in the the
 ### Estimation Methods
 These files contain the implementation of the 4 estimation methods (two calibration approaches and two variants of the EM algorithm)
 
-- **`Calibration_Methods.Rmd`**: Two calibration procedures (univariate calibration (X) and full calibration using Iterative Proportional Fitting (IPF))
+- **`Calibration_Methods.Rmd`**: Two calibration procedures (univariate calibration (X) and full calibration using IPF)
 - **`EM_Algorithm.Rmd`**: Expectation-Maximization algorithm for multinomial data
 
 Each of the three analyses (MAR, MNAR, Y-Z Association) contain separate scripts for implementation and analysis for clarity and reproducibility.
 
 ### Implementation Scripts
-These files conduct the monte carlo simulation (1,000 replications per scenario): Generating the data, defining the scenarios (selection mechanisms), applying the estimation methods to estimate the joint distributionn across the scenarios.
+These files conduct the monte carlo simulation (1,000 replications): Generating the data, defining the scenarios (selection mechanisms), applying the estimation methods to estimate the joint distributionn across the scenarios.
 
 - **`MAR_Implementation.Rmd`**: Implementation of Missing At Random mechanisms with multiple selection patterns (linear decrease, U-shaped, step function, extreme increase)
 - **`MNAR_Implementation.Rmd`**: Implementation of Missing Not At Random mechanisms (main effects and interaction effects between Y and Z)
